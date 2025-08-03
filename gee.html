@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>GEE Vegetation Indices Explorer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    #map {
+      height: 500px;
+      border-radius: 0.5rem;
+    }
+    #chart {
+      height: 300px;
+      border-radius: 0.5rem;
+    }
+    .custom-button {
+        transition: all 0.3s ease;
+    }
+    .custom-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    .loader {
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #3498db;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      margin-left: -20px;
+      margin-top: -20px;
+      z-index: 1000;
+      display: none;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    /* Custom Modal for Notifications */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 2000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        background-color: rgba(0,0,0,0.4);
+    }
+    .modal-content {
+        background-color: #fefefe;
+        margin: 15% auto;
+        padding: 20px;
+        border: 1px solid #888;
+        width: 80%;
+        max-width: 500px;
+        border-radius: 0.5rem;
+        text-align: center;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    }
+    .modal-close {
+        color: #aaa;
+        float: right;
+        font-size: 28px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+  <div class="container mx-auto p-4 md:p-8">
+    <div class="bg-white p-6 rounded-lg shadow-lg mb-8">
+      <h1 class="text-3xl font-bold mb-2 text-gray-800">Google Earth Engine Vegetation Indices Explorer</h1>
+      <p class="text-gray-600">Analyze satellite imagery to calculate vegetation indices for any area of interest.</p>
+    </div>
+
+    <!-- Auth and Controls -->
+    <div class="bg-white p-6 rounded-lg shadow-lg mb-8">
+      <div id="auth-container" class="flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div id="g-signin2"></div>
+        <p id="auth-status" class="text-gray-500">Please sign in to use the application.</p>
+      </div>
+
+      <div id="controls" class="hidden mt-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div>
+            <label for="start-date" class="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+            <input type="date" id="start-date" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+          </div>
+          <div>
+            <label for="end-date" class="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+            <input type="date" id="end-date" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+          </div>
+          <div>
+            <label for="index-select" class="block text-sm font-medium text-gray-700 mb-1">Vegetation Index</label>
+            <select id="index-select" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+              <option value="NDVI">NDVI</option>
+              <option value="EVI">EVI</option>
+              <option value="SAVI">SAVI</option>
+            </select>
+          </div>
+          <div class="flex items-end">
+            <button id="run-analysis" class="w-full custom-button bg-indigo-600 text-white font-bold py-2 px-4 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500" disabled>Run Analysis</button>
+          </div>
+        </div>
+        <p class="text-sm text-gray-500 mt-4">Draw a polygon on the map to select your area of interest.</p>
+      </div>
+    </div>
+
+    <!-- Map and Chart -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div class="bg-white p-6 rounded-lg shadow-lg relative">
+            <div id="map"></div>
+            <div id="legend" class="absolute bottom-4 left-4 bg-white p-2 rounded-md shadow-md text-xs z-10"></div>
+            <div class="loader" id="map-loader"></div>
+        </div>
+        <div class="bg-white p-6 rounded-lg shadow-lg relative">
+            <div id="chart-container">
+                <h2 class="text-xl font-semibold mb-4 text-gray-700">Time Series Chart</h2>
+                <div id="chart"></div>
+                <div class="loader" id="chart-loader"></div>
+            </div>
+        </div>
+    </div>
+  </div>
+  
+  <!-- Custom Modal -->
+  <div id="notification-modal" class="modal">
+    <div class="modal-content">
+      <span id="modal-close-btn" class="modal-close">&times;</span>
+      <p id="modal-message"></p>
+    </div>
+  </div>
+
+  <!-- IMPORTANT: Replace YOUR_API_KEY with your actual Google Maps API key -->
+  <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=drawing,visualization&callback=initMap" async defer></script>
+  <script src="https://apis.google.com/js/platform.js?onload=renderButton" async defer></script>
+  <script src="https://ajax.googleapis.com/ajax/libs/earthengine/0.1.366/earthengine-api.min.js"></script>
+  <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+
+  <script>
+    let map;
+    let drawingManager;
+    let selectedShape;
+    let eeInitialized = false;
+
+    // Initialize Google Charts
+    google.charts.load('current', {'packages':['corechart']});
+
+    // Initialize the Google Map
+    function initMap() {
+      map = new google.maps.Map(document.getElementById('map'), {
+        center: { lat: 22.3039, lng: 70.8022 }, // Default to Gujarat, India
+        zoom: 7,
+        mapTypeId: 'satellite'
+      });
+
+      drawingManager = new google.maps.drawing.DrawingManager({
+        drawingMode: google.maps.drawing.OverlayType.POLYGON,
+        drawingControl: true,
+        drawingControlOptions: {
+          position: google.maps.ControlPosition.TOP_CENTER,
+          drawingModes: ['polygon']
+        },
+        polygonOptions: {
+          fillColor: '#FF0000',
+          fillOpacity: 0.3,
+          strokeWeight: 2,
+          strokeColor: '#FF0000',
+          clickable: false,
+          editable: true,
+          zIndex: 1
+        }
+      });
+      drawingManager.setMap(map);
+
+      google.maps.event.addListener(drawingManager, 'overlaycomplete', (event) => {
+        if (selectedShape) {
+          selectedShape.setMap(null);
+        }
+        selectedShape = event.overlay;
+        drawingManager.setDrawingMode(null);
+      });
+    }
+
+    // Render the Google Sign-In button
+    function renderButton() {
+      gapi.load('auth2', () => {
+        // IMPORTANT: Replace with your actual Google Cloud Client ID
+        gapi.auth2.init({
+          client_id: 'YOUR_CLIENT_ID.apps.googleusercontent.com', 
+          scope: 'profile email https://www.googleapis.com/auth/earthengine'
+        }).then(() => {
+            gapi.signin2.render('g-signin2', {
+                'scope': 'profile email https://www.googleapis.com/auth/earthengine',
+                'width': 240,
+                'height': 50,
+                'longtitle': true,
+                'theme': 'dark',
+                'onsuccess': onSignIn,
+                'onfailure': onFailure
+            });
+        });
+      });
+    }
+
+    // Handle successful sign-in
+    function onSignIn(googleUser) {
+        const profile = googleUser.getBasicProfile();
+        document.getElementById('auth-status').textContent = `Signed in as: ${profile.getName()}`;
+        document.getElementById('g-signin2').style.display = 'none';
+
+        const auth_token = googleUser.getAuthResponse().access_token;
+
+        ee.data.setAuthToken(null, 'Bearer', auth_token, 3600, null, () => {
+             ee.initialize(null, null, () => {
+                eeInitialized = true;
+                document.getElementById('run-analysis').disabled = false;
+                document.getElementById('controls').classList.remove('hidden');
+            }, (error) => {
+                console.error('Earth Engine initialization error:', error);
+                showModal('Could not initialize Google Earth Engine. Please try again.');
+            });
+        }, (error) => {
+            console.error('Set Auth Token Error:', error);
+            showModal('Could not authenticate with Google Earth Engine. Please try again.');
+        });
+    }
+
+    // Handle sign-in failure
+    function onFailure(error) {
+      console.error('Sign-in error:', error);
+      showModal('Google Sign-In failed. Please try again.');
+    }
+
+    // Add event listener to the "Run Analysis" button
+    document.getElementById('run-analysis').addEventListener('click', runAnalysis);
+
+    // Main analysis function
+    function runAnalysis() {
+      if (!eeInitialized) {
+        showModal('Earth Engine is not initialized. Please sign in first.');
+        return;
+      }
+      if (!selectedShape) {
+        showModal('Please draw a polygon on the map to select an area of interest.');
+        return;
+      }
+
+      showLoader('map-loader');
+      showLoader('chart-loader');
+
+      const startDate = document.getElementById('start-date').value;
+      const endDate = document.getElementById('end-date').value;
+      const index = document.getElementById('index-select').value;
+
+      if (!startDate || !endDate) {
+          showModal('Please select a start and end date.');
+          hideLoader('map-loader');
+          hideLoader('chart-loader');
+          return;
+      }
+
+      // Convert Google Maps polygon to ee.Geometry
+      const paths = selectedShape.getPath().getArray().map(p => [p.lng(), p.lat()]);
+      const aoi = ee.Geometry.Polygon([paths]);
+
+      // Load image collection and filter
+      const imageCollection = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+        .filterBounds(aoi)
+        .filterDate(startDate, endDate)
+        .map(applyScaleFactors);
+
+      // Function to calculate the selected index
+      const addIndex = (image) => {
+        let newImage;
+        if (index === 'NDVI') {
+          newImage = image.normalizedDifference(['SR_B5', 'SR_B4']).rename('NDVI');
+        } else if (index === 'EVI') {
+          newImage = image.expression(
+            '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', {
+              'NIR': image.select('SR_B5'), 'RED': image.select('SR_B4'), 'BLUE': image.select('SR_B2')
+            }).rename('EVI');
+        } else if (index === 'SAVI') {
+           newImage = image.expression(
+            '((NIR - RED) / (NIR + RED + 0.5)) * 1.5', {
+              'NIR': image.select('SR_B5'), 'RED': image.select('SR_B4')
+            }).rename('SAVI');
+        }
+        return image.addBands(newImage);
+      };
+
+      const collectionWithIndex = imageCollection.map(addIndex);
+      const medianImage = collectionWithIndex.select([index]).median().clip(aoi);
+
+      // Visualization parameters
+      const visParams = {
+        min: -1,
+        max: 1,
+        palette: ['blue', 'white', 'green']
+      };
+
+      // Add layer to map
+      medianImage.getMap(visParams, ({mapid, token}) => {
+        const tileSource = new ee.layers.EarthEngineTileSource({mapid, token});
+        const overlay = new ee.layers.ImageOverlay(tileSource);
+        map.overlayMapTypes.clear();
+        map.overlayMapTypes.push(overlay);
+        updateLegend(visParams);
+        hideLoader('map-loader');
+      });
+
+      // Create time-series chart data
+      const timeSeries = collectionWithIndex.map((image) => {
+        const date = image.date().format('YYYY-MM-dd');
+        const value = image.reduceRegion({
+            reducer: ee.Reducer.mean(),
+            geometry: aoi,
+            scale: 30,
+        }).get(index);
+        return ee.Feature(null, {'date': date, 'value': value});
+      });
+
+      // Evaluate the time series data to bring it client-side
+      timeSeries.evaluate((features) => {
+          const chartData = [['Date', index]];
+          features.features.forEach((feature) => {
+              if (feature.properties.value !== null) {
+                  chartData.push([new Date(feature.properties.date), feature.properties.value]);
+              }
+          });
+          
+          if (chartData.length <= 1) {
+              document.getElementById('chart').innerHTML = '<p class="text-center text-gray-500">No data available for the selected period and region.</p>';
+              hideLoader('chart-loader');
+              return;
+          }
+
+          const dataTable = google.visualization.arrayToDataTable(chartData);
+          const options = {
+              title: `${index} Time Series`,
+              vAxis: {title: index, viewWindow: { min: -1, max: 1 }},
+              hAxis: {title: 'Date', format: 'MMM-yy'},
+              legend: { position: 'none' },
+              explorer: { actions: ['dragToZoom', 'rightClickToReset'] }
+          };
+          const chart = new google.visualization.LineChart(document.getElementById('chart'));
+          chart.draw(dataTable, options);
+          hideLoader('chart-loader');
+      });
+    }
+    
+    // Helper function to apply scale factors to Landsat 8 images
+    function applyScaleFactors(image) {
+      const opticalBands = image.select('SR_B.').multiply(0.0000275).add(-0.2);
+      const thermalBands = image.select('ST_B.*').multiply(0.00341802).add(149.0);
+      return image.addBands(opticalBands, null, true)
+                  .addBands(thermalBands, null, true);
+    }
+
+    // Helper function to update the map legend
+    function updateLegend(params) {
+        const legend = document.getElementById('legend');
+        legend.innerHTML = `<strong>${document.getElementById('index-select').value} Legend</strong><br>`;
+        const palette = params.palette;
+        const min = params.min;
+        const max = params.max;
+        
+        const gradient = palette.map((color, index) => {
+            const percent = (index / (palette.length - 1)) * 100;
+            return `${color} ${percent}%`;
+        }).join(', ');
+
+        legend.innerHTML += `
+            <div class="flex items-center mt-1">
+                <span>${min.toFixed(1)}</span>
+                <div class="flex-grow h-4 mx-2" style="background: linear-gradient(to right, ${gradient});"></div>
+                <span>${max.toFixed(1)}</span>
+            </div>
+        `;
+    }
+    
+    // UI Helper functions
+    function showLoader(id) {
+        document.getElementById(id).style.display = 'block';
+    }
+
+    function hideLoader(id) {
+        document.getElementById(id).style.display = 'none';
+    }
+
+    const modal = document.getElementById('notification-modal');
+    function showModal(message) {
+        document.getElementById('modal-message').textContent = message;
+        modal.style.display = "block";
+    }
+    document.getElementById('modal-close-btn').onclick = () => {
+        modal.style.display = "none";
+    }
+    window.onclick = (event) => {
+        if (event.target == modal) {
+            modal.style.display = "none";
+        }
+    }
+
+  </script>
+</body>
+</html>
